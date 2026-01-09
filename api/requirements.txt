@@ -1,0 +1,2 @@
+# Python dependencies
+# OpenAI will be added later after structure is validated
