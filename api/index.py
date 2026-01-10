@@ -319,7 +319,5 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 # ==================== VERCEL HANDLER ====================
 
-# Vercel expects a handler function for serverless deployment
-def handler(request, context):
-    """Vercel serverless handler wrapper"""
-    return app(request, context)
+# For Vercel, the app instance is automatically used as the handler
+# No explicit handler function needed with FastAPI + Vercel
