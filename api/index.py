@@ -1,6 +1,7 @@
 """
 SlotlyMed Backend - FastAPI Unified API
 All endpoints centralized in one file for Vercel serverless deployment
+UPDATED: Now includes /api/schedule endpoint for AI schedule generation
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,6 +12,8 @@ from typing import Optional, List
 import sys
 import os
 import json
+from datetime import datetime, timedelta, time
+from openai import OpenAI
 
 # Add parent directory to path to import sheets_client
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -31,6 +34,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize OpenAI client
+openai_client = OpenAI()
 
 # ==================== PYDANTIC MODELS ====================
 
@@ -62,6 +68,107 @@ class AppointmentModel(BaseModel):
     time: str
     notes: Optional[str] = ""
 
+class ScheduleRequest(BaseModel):
+    schedule_text: str
+
+class Slot(BaseModel):
+    date: str
+    time: str
+    status: str = "available"
+
+class ScheduleResponse(BaseModel):
+    success: bool
+    slots: List[Slot]
+    total_slots: int
+    error: Optional[str] = None
+
+# ==================== SCHEDULE FUNCTIONS ====================
+
+def validate_schedule_text(text: str) -> Optional[str]:
+    """Valida o texto de entrada para evitar abuso e garantir o mínimo de qualidade."""
+    text_lower = text.lower().strip()
+    if len(text_lower) < 15:
+        return "Schedule text is too short. Please provide more details (minimum 15 characters)."
+    
+    blocked_keywords = ["recipe", "receita", "bolo", "cake", "poem", "poema", "piada", "joke"]
+    if any(word in text_lower for word in blocked_keywords):
+        return "The text does not appear to be schedule-related. Please enter only information about your work hours."
+    
+    return None
+
+def get_schedule_structure_from_openai(text: str) -> dict:
+    """Chama a API da OpenAI para extrair uma estrutura de horários do texto."""
+    system_prompt = '''You are a scheduling analysis assistant. Your task is to analyze the user's text and extract a schedule structure in JSON format.
+The JSON must contain:
+- `days`: a list of weekdays in English (e.g., ["Monday", "Friday"]).
+- `start_time`: the start time in HH:MM format.
+- `end_time`: the end time in HH:MM format.
+- `slot_duration_minutes`: the duration of each appointment in minutes (integer).
+- `breaks`: a list of breaks, each with `start`, `end`, and `name` (e.g., [{"start": "12:00", "end": "13:00", "name": "Lunch"}]). If there are no breaks, return an empty list.
+Respond only with the JSON object.'''
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ],
+        response_format={"type": "json_object"}
+    )
+    return json.loads(response.choices[0].message.content)
+
+def generate_slots(structure: dict) -> List[Slot]:
+    """Gera uma lista de slots de agendamento para os próximos 90 dias com base na estrutura fornecida."""
+    slots = []
+    today = datetime.now().date()
+    end_date = today + timedelta(days=90)
+    current_date = today
+
+    day_mapping = {
+        "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, 
+        "Friday": 4, "Saturday": 5, "Sunday": 6
+    }
+    work_days_indices = [day_mapping[day] for day in structure.get("days", [])]
+
+    start_time_obj = time.fromisoformat(structure["start_time"])
+    end_time_obj = time.fromisoformat(structure["end_time"])
+    slot_duration = timedelta(minutes=structure["slot_duration_minutes"])
+
+    breaks = structure.get("breaks", [])
+    break_intervals = []
+    for b in breaks:
+        break_intervals.append(
+            (time.fromisoformat(b["start"]), time.fromisoformat(b["end"]))
+        )
+
+    while current_date <= end_date:
+        if current_date.weekday() in work_days_indices:
+            current_slot_time = datetime.combine(current_date, start_time_obj)
+            end_of_day_time = datetime.combine(current_date, end_time_obj)
+
+            while current_slot_time < end_of_day_time:
+                slot_end_time = current_slot_time + slot_duration
+                if slot_end_time > end_of_day_time:
+                    break
+
+                is_in_break = False
+                for break_start, break_end in break_intervals:
+                    if not (current_slot_time.time() >= break_end or slot_end_time.time() <= break_start):
+                        is_in_break = True
+                        break
+                
+                if not is_in_break:
+                    slots.append(Slot(
+                        date=current_slot_time.strftime("%Y-%m-%d"),
+                        time=current_slot_time.strftime("%H:%M")
+                    ))
+                
+                current_slot_time = slot_end_time
+        
+        current_date += timedelta(days=1)
+    
+    return slots
+
 # ==================== ENDPOINTS ====================
 
 @app.get("/")
@@ -75,6 +182,7 @@ async def root():
             "GET /api/test",
             "GET /api/get-doctor?id={doctor_id}",
             "POST /api/save-doctor",
+            "POST /api/schedule",
             "GET /api/get-slots?doctor_id={doctor_id}&date={date}",
             "POST /api/book-appointment"
         ]
@@ -86,8 +194,55 @@ async def test_endpoint():
     return {
         "success": True,
         "message": "FastAPI endpoint is working perfectly!",
-        "timestamp": "2026-01-10"
+        "timestamp": "2026-01-11"
     }
+
+@app.post("/api/schedule", response_model=ScheduleResponse, tags=["Scheduling"])
+async def generate_schedule(request: ScheduleRequest):
+    """
+    Receives a natural language description of work hours,
+    uses OpenAI to analyze it, and generates 90 days of available appointment slots.
+    """
+    # 1. Validation
+    validation_error = validate_schedule_text(request.schedule_text)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+
+    try:
+        # 2. OpenAI Processing
+        schedule_structure = get_schedule_structure_from_openai(request.schedule_text)
+
+        # Validate structure from OpenAI
+        required_keys = ["days", "start_time", "end_time", "slot_duration_minutes"]
+        if not all(key in schedule_structure for key in required_keys):
+            raise HTTPException(
+                status_code=500, 
+                detail="AI could not extract a valid schedule structure. Try rephrasing your text."
+            )
+
+        # 3. Generate Slots
+        generated_slots = generate_slots(schedule_structure)
+        
+        if not generated_slots:
+            raise HTTPException(
+                status_code=404, 
+                detail="No appointment slots could be generated based on the provided text. Check days and hours."
+            )
+
+        # 4. Return Response
+        return ScheduleResponse(
+            success=True,
+            slots=generated_slots,
+            total_slots=len(generated_slots)
+        )
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal error occurred while processing your request: {str(e)}"
+        )
 
 @app.get("/api/get-doctor")
 async def get_doctor(id: str):
