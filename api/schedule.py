@@ -25,7 +25,7 @@ class handler(BaseHTTPRequestHandler):
             "message": "SlotlyMed API with OpenAI is running!",
             "endpoint": "/api/schedule",
             "status": "operational",
-            "version": "3.0-fixed"
+            "version": "4.0-fixed-format"
         }
         self.wfile.write(json.dumps(response).encode())
     
@@ -45,7 +45,7 @@ class handler(BaseHTTPRequestHandler):
             
             # Validate context (anti-abuse)
             if not self.validate_medical_context(schedule_text):
-                self.send_error_response(400, "Please describe medical appointment scheduling only")
+                self.send_error_response(400, "Invalid schedule description. Please describe your medical practice schedule.")
                 return
             
             # Process with OpenAI
@@ -55,24 +55,37 @@ class handler(BaseHTTPRequestHandler):
                 
                 response = {
                     "success": True,
-                    "message": "Schedule generated successfully!",
-                    "slots": slots[:10],  # Return first 10 slots as preview
-                    "schedule_data": schedule_data,
+                    "slots": slots,
                     "total_slots": len(slots)
                 }
                 
                 self.send_success_response(response)
                 
             except Exception as ai_error:
-                self.send_error_response(500, f"AI error: {str(ai_error)}")
+                self.send_error_response(500, f"AI processing error: {str(ai_error)}")
             
         except Exception as e:
             self.send_error_response(500, f"Server error: {str(e)}")
     
     def validate_medical_context(self, text):
-        """Validate if text is about medical scheduling"""
+        """Validate if text is about medical scheduling - with anti-abuse"""
         text_lower = text.lower()
         
+        # Block obviously non-medical requests
+        blocked_keywords = [
+            'recipe', 'receita', 'bolo', 'cake', 'cooking', 'cozinha',
+            'poem', 'poema', 'story', 'história', 'joke', 'piada'
+        ]
+        
+        for keyword in blocked_keywords:
+            if keyword in text_lower:
+                return False
+        
+        # Check minimum length
+        if len(text.strip()) < 10:
+            return False
+        
+        # Must have at least some scheduling-related terms
         keywords = [
             'atendo', 'consulta', 'horário', 'agenda', 'paciente',
             'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
@@ -82,14 +95,15 @@ class handler(BaseHTTPRequestHandler):
             'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag',
             'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì',
             'appointment', 'schedule', 'patient', 'slots', 'minutes', 'hours',
-            'cita', 'horario', 'rendez-vous', 'termin', 'appuntamento'
+            'cita', 'horario', 'rendez-vous', 'termin', 'appuntamento',
+            'am', 'pm', 'hour', 'time', 'break', 'lunch'
         ]
         
         keyword_count = sum(1 for keyword in keywords if keyword in text_lower)
-        return keyword_count >= 2
+        return keyword_count >= 1
     
     def parse_with_openai(self, schedule_text):
-        """Use OpenAI API directly via HTTP to avoid proxy issues"""
+        """Use OpenAI API directly via HTTP"""
         api_key = os.getenv('OPENAI_API_KEY')
         
         if not api_key:
@@ -111,11 +125,11 @@ Return this exact structure:
 }}
 
 Rules:
-- Use English day names
+- Use English day names: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
 - Use 24h format (HH:MM)
-- If no breaks mentioned, return empty array
+- If no breaks mentioned, return empty array []
 - If duration not mentioned, use 30 minutes
-- Return ONLY the JSON, no explanation"""
+- Return ONLY the JSON object, no explanation or markdown"""
 
         # Prepare request
         url = "https://api.openai.com/v1/chat/completions"
@@ -127,7 +141,7 @@ Rules:
         payload = {
             "model": "gpt-4o-mini",
             "messages": [
-                {"role": "system", "content": "You are a medical scheduling assistant. Always return valid JSON only."},
+                {"role": "system", "content": "You are a medical scheduling assistant. Always return valid JSON only, no markdown."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
@@ -147,13 +161,20 @@ Rules:
                 result = json.loads(response.read().decode('utf-8'))
                 response_text = result['choices'][0]['message']['content'].strip()
                 
+                # Remove markdown code blocks if present
+                if response_text.startswith("```"):
+                    lines = response_text.split('\n')
+                    response_text = '\n'.join(lines[1:-1]) if len(lines) > 2 else response_text
+                    if response_text.startswith("json"):
+                        response_text = response_text[4:].strip()
+                
                 # Try to parse JSON
                 try:
                     return json.loads(response_text)
                 except json.JSONDecodeError:
-                    # Try to extract JSON from markdown code blocks
+                    # Try to extract JSON from text
                     import re
-                    json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                    json_match = re.search(r'\{[^\}]+\}', response_text, re.DOTALL)
                     if json_match:
                         return json.loads(json_match.group())
                     else:
@@ -233,12 +254,14 @@ Rules:
                 slot_hour = current_time_minutes // 60
                 slot_minute = current_time_minutes % 60
                 
-                slot_datetime = datetime.combine(
-                    current_date,
-                    datetime.min.time().replace(hour=slot_hour, minute=slot_minute)
-                )
+                # FORMAT CORRETO: {date, time, status}
+                slot = {
+                    "date": current_date.strftime("%Y-%m-%d"),
+                    "time": f"{slot_hour:02d}:{slot_minute:02d}",
+                    "status": "available"
+                }
                 
-                slots.append(slot_datetime.isoformat())
+                slots.append(slot)
                 current_time_minutes += slot_duration
         
         return slots
