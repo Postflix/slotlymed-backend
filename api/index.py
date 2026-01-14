@@ -20,7 +20,7 @@ import stripe
 
 # Add parent directory to path to import sheets_client
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from sheets_client import SheetsClient
+from supabase_client import SheetsClient
 
 # Initialize FastAPI app
 app = FastAPI(
