@@ -1,5 +1,5 @@
 """
-Google Sheets Client for SlotlyMed
+Google Sheets Client for SlotlyCare
 Handles all interactions with Google Sheets database
 """
 
@@ -48,6 +48,13 @@ class SheetsClient:
         self.doctors_sheet = self.spreadsheet.worksheet('doctors')
         self.availability_sheet = self.spreadsheet.worksheet('availability')
         self.appointments_sheet = self.spreadsheet.worksheet('appointments')
+        
+        # Try to get users sheet, create if doesn't exist
+        try:
+            self.users_sheet = self.spreadsheet.worksheet('users')
+        except gspread.exceptions.WorksheetNotFound:
+            self.users_sheet = self.spreadsheet.add_worksheet(title='users', rows=1000, cols=10)
+            self.users_sheet.append_row(['customer_id', 'email', 'password_hash', 'created_at'])
     
     # ==================== DOCTORS METHODS ====================
     
@@ -68,6 +75,7 @@ class SheetsClient:
                 - language: interface language (en, pt, es, fr, de, it)
                 - welcome_message: greeting message (optional)
                 - link: unique link (same as id)
+                - customer_id: Stripe customer ID (optional)
         
         Returns:
             dict: Success status and doctor ID
@@ -81,8 +89,8 @@ class SheetsClient:
                 cell = self.doctors_sheet.find(doctor_data['id'])
                 row_num = cell.row
                 
-                # Update row
-                self.doctors_sheet.update(f'A{row_num}:K{row_num}', [[
+                # Update row (now with 12 columns including customer_id)
+                self.doctors_sheet.update(f'A{row_num}:L{row_num}', [[
                     doctor_data['id'],
                     doctor_data['name'],
                     doctor_data.get('specialty', ''),
@@ -93,7 +101,8 @@ class SheetsClient:
                     doctor_data['color'],
                     doctor_data['language'],
                     doctor_data.get('welcome_message', ''),
-                    doctor_data['link']
+                    doctor_data['link'],
+                    doctor_data.get('customer_id', existing.get('customer_id', ''))
                 ]])
                 
                 return {
@@ -114,7 +123,8 @@ class SheetsClient:
                     doctor_data['color'],
                     doctor_data['language'],
                     doctor_data.get('welcome_message', ''),
-                    doctor_data['link']
+                    doctor_data['link'],
+                    doctor_data.get('customer_id', '')
                 ])
                 
                 return {
@@ -160,13 +170,51 @@ class SheetsClient:
                 'color': row_data[7] if len(row_data) > 7 else '#3B82F6',
                 'language': row_data[8] if len(row_data) > 8 else 'en',
                 'welcome_message': row_data[9] if len(row_data) > 9 else '',
-                'link': row_data[10] if len(row_data) > 10 else ''
+                'link': row_data[10] if len(row_data) > 10 else '',
+                'customer_id': row_data[11] if len(row_data) > 11 else ''
             }
         
         except gspread.exceptions.CellNotFound:
             return None
         except Exception as e:
             print(f"Error getting doctor: {e}")
+            return None
+    
+    def get_doctor_by_customer_id(self, customer_id):
+        """
+        Get doctor data by Stripe customer ID
+        
+        Args:
+            customer_id (str): Stripe customer ID
+        
+        Returns:
+            dict: Doctor data or None if not found
+        """
+        try:
+            # Get all rows
+            all_rows = self.doctors_sheet.get_all_values()[1:]  # Skip header
+            
+            for row in all_rows:
+                if len(row) > 11 and row[11] == customer_id:
+                    return {
+                        'id': row[0],
+                        'name': row[1],
+                        'specialty': row[2] if len(row) > 2 else '',
+                        'address': row[3] if len(row) > 3 else '',
+                        'phone': row[4] if len(row) > 4 else '',
+                        'email': row[5] if len(row) > 5 else '',
+                        'logo_url': row[6] if len(row) > 6 else '',
+                        'color': row[7] if len(row) > 7 else '#3B82F6',
+                        'language': row[8] if len(row) > 8 else 'en',
+                        'welcome_message': row[9] if len(row) > 9 else '',
+                        'link': row[10] if len(row) > 10 else '',
+                        'customer_id': row[11] if len(row) > 11 else ''
+                    }
+            
+            return None
+        
+        except Exception as e:
+            print(f"Error getting doctor by customer_id: {e}")
             return None
     
     def check_link_available(self, link, exclude_doctor_id=None):
@@ -195,6 +243,92 @@ class SheetsClient:
         except Exception as e:
             print(f"Error checking link: {e}")
             return False
+    
+    # ==================== USERS METHODS ====================
+    
+    def save_user(self, user_data):
+        """
+        Save user data (for authentication)
+        
+        Args:
+            user_data (dict):
+                - customer_id: Stripe customer ID
+                - email: user email
+                - password_hash: hashed password
+                - created_at: timestamp
+        
+        Returns:
+            dict: Success status
+        """
+        try:
+            # Check if user already exists
+            existing = self.get_user(user_data['customer_id'])
+            
+            if existing:
+                # Update existing user
+                cell = self.users_sheet.find(user_data['customer_id'])
+                row_num = cell.row
+                
+                self.users_sheet.update(f'A{row_num}:D{row_num}', [[
+                    user_data['customer_id'],
+                    user_data['email'],
+                    user_data['password_hash'],
+                    user_data.get('created_at', datetime.now().isoformat())
+                ]])
+                
+                return {
+                    'success': True,
+                    'message': 'User updated'
+                }
+            else:
+                # Add new user
+                self.users_sheet.append_row([
+                    user_data['customer_id'],
+                    user_data['email'],
+                    user_data['password_hash'],
+                    user_data.get('created_at', datetime.now().isoformat())
+                ])
+                
+                return {
+                    'success': True,
+                    'message': 'User created'
+                }
+        
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_user(self, customer_id):
+        """
+        Get user data by customer ID
+        
+        Args:
+            customer_id (str): Stripe customer ID
+        
+        Returns:
+            dict: User data or None if not found
+        """
+        try:
+            cell = self.users_sheet.find(customer_id)
+            if not cell:
+                return None
+            
+            row_data = self.users_sheet.row_values(cell.row)
+            
+            return {
+                'customer_id': row_data[0],
+                'email': row_data[1] if len(row_data) > 1 else '',
+                'password_hash': row_data[2] if len(row_data) > 2 else '',
+                'created_at': row_data[3] if len(row_data) > 3 else ''
+            }
+        
+        except gspread.exceptions.CellNotFound:
+            return None
+        except Exception as e:
+            print(f"Error getting user: {e}")
+            return None
     
     # ==================== AVAILABILITY METHODS ====================
     
