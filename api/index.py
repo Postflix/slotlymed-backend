@@ -568,13 +568,14 @@ async def save_doctor(doctor: DoctorModel):
             )
         
         # If updating and link changed, we need to update the ID too
+        new_doctor_id = None
         if existing_doctor and existing_doctor['link'] != doctor.link:
             # The link is changing - use new link as new ID
-            doctor_id = doctor.link
+            new_doctor_id = doctor.link
         
         # Prepare doctor data
         doctor_data = {
-            'id': doctor_id if not existing_doctor else existing_doctor['id'],
+            'id': new_doctor_id if new_doctor_id else (existing_doctor['id'] if existing_doctor else doctor_id),
             'name': doctor.name,
             'specialty': doctor.specialty or '',
             'address': doctor.address,
@@ -588,6 +589,15 @@ async def save_doctor(doctor: DoctorModel):
             'link': doctor.link,
             'customer_id': doctor.customer_id or ''
         }
+        
+        # If link changed, we need to delete old record and create new one
+        if new_doctor_id and existing_doctor:
+            # Delete old doctor record
+            sheets.supabase.table('doctors').delete().eq('id', existing_doctor['id']).execute()
+            # Also update availability to use new doctor_id
+            sheets.supabase.table('availability').update({'doctor_id': new_doctor_id}).eq('doctor_id', existing_doctor['id']).execute()
+            # Also update appointments to use new doctor_id
+            sheets.supabase.table('appointments').update({'doctor_id': new_doctor_id}).eq('doctor_id', existing_doctor['id']).execute()
         
         # Save doctor data
         doctor_result = sheets.save_doctor(doctor_data)
