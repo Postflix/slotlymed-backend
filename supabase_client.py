@@ -57,6 +57,7 @@ class SheetsClient:
                 'color': doctor_data.get('color', '#3B82F6'),
                 'language': doctor_data.get('language', 'en'),
                 'welcome_message': doctor_data.get('welcome_message', ''),
+                'additional_info': doctor_data.get('additional_info', ''),
                 'link': doctor_data['link'],
                 'customer_id': doctor_data.get('customer_id', existing.get('customer_id', '') if existing else ''),
                 'updated_at': datetime.now().isoformat()
