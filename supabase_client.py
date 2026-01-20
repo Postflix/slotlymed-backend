@@ -267,6 +267,59 @@ class SheetsClient:
             print(f"Error getting user: {e}")
             return None
     
+    def get_user_by_email(self, email):
+        """
+        Get user data by email
+        
+        Args:
+            email (str): User email
+        
+        Returns:
+            dict: User data or None if not found
+        """
+        try:
+            result = self.supabase.table('users').select('*').eq('email', email).execute()
+            
+            if result.data and len(result.data) > 0:
+                row = result.data[0]
+                return {
+                    'customer_id': row['customer_id'],
+                    'email': row.get('email', ''),
+                    'password_hash': row.get('password_hash', ''),
+                    'created_at': row.get('created_at', '')
+                }
+            
+            return None
+        
+        except Exception as e:
+            print(f"Error getting user by email: {e}")
+            return None
+    
+    def update_user_password(self, email, new_password_hash):
+        """
+        Update user password by email
+        
+        Args:
+            email (str): User email
+            new_password_hash (str): New hashed password
+        
+        Returns:
+            dict: Success status
+        """
+        try:
+            result = self.supabase.table('users').update({
+                'password_hash': new_password_hash
+            }).eq('email', email).execute()
+            
+            if result.data and len(result.data) > 0:
+                return {'success': True}
+            
+            return {'success': False, 'error': 'User not found'}
+        
+        except Exception as e:
+            print(f"Error updating password: {e}")
+            return {'success': False, 'error': str(e)}
+    
     # ==================== AVAILABILITY METHODS ====================
     
     def save_availability(self, doctor_id, slots):
