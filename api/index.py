@@ -95,7 +95,7 @@ class SetPasswordRequest(BaseModel):
     password: str
 
 class LoginRequest(BaseModel):
-    customer_id: str
+    email: str
     password: str
 
 class ScheduleResponse(BaseModel):
@@ -832,11 +832,11 @@ async def set_password(request: SetPasswordRequest):
 @app.post("/api/login")
 async def login(request: LoginRequest):
     """
-    Verify customer_id and password
+    Verify email and password
     """
     try:
         sheets = SheetsClient()
-        user = sheets.get_user(request.customer_id)
+        user = sheets.get_user_by_email(request.email)
         
         if not user:
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -848,12 +848,11 @@ async def login(request: LoginRequest):
         
         # For one-time payment model, we just check if user exists in our database
         # (they were added after successful payment)
-        # In the future, you can add expiration date check here for 3-year access
         
         return {
             "success": True,
             "message": "Login successful",
-            "customer_id": request.customer_id,
+            "customer_id": user.get('customer_id'),
             "email": user.get('email')
         }
     
