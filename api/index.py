@@ -733,7 +733,7 @@ def hash_password(password: str) -> str:
 @app.post("/api/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
     """
-    Create a Stripe Checkout session for subscription
+    Create a Stripe Checkout session for one-time payment
     """
     try:
         price_id = os.environ.get('STRIPE_PRICE_ID', 'price_1SpFPDRmTP4UQnz3uiYcFQON')
@@ -745,6 +745,10 @@ async def create_checkout_session(request: CreateCheckoutRequest):
                 'quantity': 1,
             }],
             mode='payment',
+            customer_creation='always',
+            payment_intent_data={
+                'setup_future_usage': 'off_session',
+            },
             success_url=request.success_url + '?session_id={CHECKOUT_SESSION_ID}',
             cancel_url=request.cancel_url,
             allow_promotion_codes=True,
