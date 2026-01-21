@@ -618,7 +618,7 @@ async def save_doctor(doctor: DoctorModel):
             "success": True,
             "message": "Doctor configuration saved successfully",
             "doctor_id": doctor_data['id'],
-            "link": f"https://slotlycare-frontend.vercel.app/{doctor.link}",
+            "link": f"https://www.slotlycare.com/{doctor.link}",
             "slots_saved": slots_saved
         }
     
