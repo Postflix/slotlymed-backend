@@ -104,6 +104,15 @@ class ScheduleResponse(BaseModel):
     total_slots: int
     error: Optional[str] = None
 
+class ReferralRequest(BaseModel):
+    referred_name: str
+    referred_email: str
+    referred_specialty: Optional[str] = ""
+    message: Optional[str] = ""
+    referrer_customer_id: str
+    referrer_doctor_link: Optional[str] = ""
+    language: Optional[str] = "en"
+
 # ==================== SCHEDULE FUNCTIONS ====================
 
 def validate_schedule_text(text: str) -> Optional[str]:
@@ -903,6 +912,42 @@ async def get_appointments(customer_id: str):
             "success": True,
             "appointments": appointments,
             "count": len(appointments)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+# ==================== REFERRAL ENDPOINTS ====================
+
+@app.post("/api/save-referral")
+async def save_referral(request: ReferralRequest):
+    """
+    Save a colleague referral
+    """
+    try:
+        sheets = SheetsClient()
+        result = sheets.save_referral({
+            'referrer_customer_id': request.referrer_customer_id,
+            'referrer_doctor_link': request.referrer_doctor_link,
+            'referred_name': request.referred_name,
+            'referred_email': request.referred_email,
+            'referred_specialty': request.referred_specialty,
+            'message': request.message,
+            'language': request.language
+        })
+        
+        if not result['success']:
+            raise HTTPException(status_code=500, detail=result.get('error', 'Failed to save referral'))
+        
+        return {
+            "success": True,
+            "message": "Referral saved successfully",
+            "referral_id": result.get('referral_id')
         }
     
     except HTTPException:
