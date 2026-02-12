@@ -15,6 +15,7 @@ import os
 import json
 import hashlib
 import secrets
+import re
 from datetime import datetime, timedelta, time
 from openai import OpenAI
 import stripe
@@ -514,7 +515,9 @@ async def get_doctor(id: str):
             created_at = doctor.get('created_at', '')
             if created_at:
                 try:
-                    created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    # Normalize timezone: +00 -> +00:00, Z -> +00:00
+                    normalized = re.sub(r'([+-]\d{2})$', r'\1:00', created_at.replace('Z', '+00:00'))
+                    created_date = datetime.fromisoformat(normalized)
                     days_elapsed = (datetime.now(created_date.tzinfo) - created_date).days
                     response["trial_expired"] = days_elapsed >= 7
                     response["trial_days_remaining"] = max(0, 7 - days_elapsed)
@@ -567,7 +570,9 @@ async def get_doctor_by_customer(customer_id: str):
             created_at = doctor.get('created_at', '')
             if created_at:
                 try:
-                    created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    # Normalize timezone: +00 -> +00:00, Z -> +00:00
+                    normalized = re.sub(r'([+-]\d{2})$', r'\1:00', created_at.replace('Z', '+00:00'))
+                    created_date = datetime.fromisoformat(normalized)
                     days_elapsed = (datetime.now(created_date.tzinfo) - created_date).days
                     response["trial_expired"] = days_elapsed >= 7
                     response["trial_days_remaining"] = max(0, 7 - days_elapsed)
