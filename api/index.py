@@ -557,10 +557,28 @@ async def get_doctor_by_customer(customer_id: str):
                 "message": "No doctor found for this customer"
             }
         
-        return {
+        response = {
             "success": True,
             "doctor": doctor
         }
+        
+        # Check trial expiration
+        if customer_id.startswith('trial_'):
+            created_at = doctor.get('created_at', '')
+            if created_at:
+                try:
+                    created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    days_elapsed = (datetime.now(created_date.tzinfo) - created_date).days
+                    response["trial_expired"] = days_elapsed >= 7
+                    response["trial_days_remaining"] = max(0, 7 - days_elapsed)
+                except:
+                    response["trial_expired"] = False
+                    response["trial_days_remaining"] = 7
+            else:
+                response["trial_expired"] = False
+                response["trial_days_remaining"] = 7
+        
+        return response
     
     except Exception as e:
         raise HTTPException(
