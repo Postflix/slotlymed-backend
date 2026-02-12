@@ -16,6 +16,7 @@ import json
 import hashlib
 import secrets
 import re
+import unicodedata
 from datetime import datetime, timedelta, time
 from openai import OpenAI
 import stripe
@@ -119,6 +120,16 @@ class TrialSignupRequest(BaseModel):
     password: str
     name: str
     slug: str
+
+class BatchReferralItem(BaseModel):
+    name: str
+    email: str
+
+class BatchReferralRequest(BaseModel):
+    referrals: List[BatchReferralItem]
+    referrer_customer_id: str
+    referrer_doctor_link: Optional[str] = ""
+    language: Optional[str] = "en"
 
 # ==================== SCHEDULE FUNCTIONS ====================
 
@@ -972,12 +983,49 @@ async def get_appointments(customer_id: str):
             detail=f"Internal server error: {str(e)}"
         )
 
+# ==================== SLUG GENERATION HELPERS ====================
+
+def generate_slug(name: str) -> str:
+    """
+    Transform a name into a URL-safe slug.
+    'Dr. João Silva' → 'drjoaosilva'
+    'Dra. María Santos' → 'dramariasantos'
+    """
+    # Remove accents
+    slug = unicodedata.normalize('NFKD', name)
+    slug = slug.encode('ascii', 'ignore').decode('ascii')
+    # Keep only letters and numbers
+    slug = ''.join(c for c in slug if c.isalnum())
+    # Lowercase
+    slug = slug.lower()
+    # Fallback for empty slugs (emojis, symbols only, etc.)
+    if not slug:
+        slug = f"invite{int(datetime.utcnow().timestamp())}"
+    return slug
+
+def generate_unique_slug(sheets, base_slug: str) -> str:
+    """
+    Ensure slug is unique across invites AND doctors tables.
+    If 'drjoao' is taken, tries 'drjoao2', 'drjoao3', etc.
+    """
+    slug = base_slug
+    counter = 2
+    max_attempts = 50  # Safety limit
+    while not sheets.check_slug_available(slug):
+        slug = f"{base_slug}{counter}"
+        counter += 1
+        if counter > max_attempts:
+            # Ultimate fallback: add timestamp
+            slug = f"{base_slug}{int(datetime.utcnow().timestamp())}"
+            break
+    return slug
+
 # ==================== REFERRAL ENDPOINTS ====================
 
 @app.post("/api/save-referral")
 async def save_referral(request: ReferralRequest):
     """
-    Save a colleague referral
+    Save a colleague referral (single — legacy endpoint, kept for compatibility)
     """
     try:
         sheets = SheetsClient()
@@ -1002,6 +1050,107 @@ async def save_referral(request: ReferralRequest):
     
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+@app.post("/api/batch-referrals")
+async def batch_referrals(request: BatchReferralRequest):
+    """
+    Create invites and referrals in batch.
+    For each colleague: generates slug, creates invite, saves referral.
+    Returns list of generated invite links.
+    """
+    try:
+        sheets = SheetsClient()
+        
+        # Get referrer doctor's name (for the green bar on convite.html)
+        referrer_doctor = sheets.get_doctor_by_customer_id(request.referrer_customer_id)
+        referrer_name = referrer_doctor['name'] if referrer_doctor else ''
+        
+        results = []
+        errors = []
+        
+        for item in request.referrals:
+            try:
+                # 1. Generate unique slug
+                base_slug = generate_slug(item.name)
+                unique_slug = generate_unique_slug(sheets, base_slug)
+                
+                # 2. Create invite (this powers convite.html)
+                invite_result = sheets.create_invite({
+                    'invited_name': item.name,
+                    'slug': unique_slug,
+                    'referrer_name': referrer_name,
+                    'status': 'pending'
+                })
+                
+                if not invite_result['success']:
+                    errors.append({'name': item.name, 'error': invite_result.get('error', 'Failed to create invite')})
+                    continue
+                
+                # 3. Save referral record (for tracking)
+                sheets.save_referral({
+                    'referrer_customer_id': request.referrer_customer_id,
+                    'referrer_doctor_link': request.referrer_doctor_link,
+                    'referred_name': item.name,
+                    'referred_email': item.email,
+                    'referred_specialty': '',
+                    'message': '',
+                    'language': request.language,
+                    'invite_slug': unique_slug
+                })
+                
+                results.append({
+                    'name': item.name,
+                    'email': item.email,
+                    'slug': unique_slug
+                })
+                
+            except Exception as item_error:
+                print(f"Error processing referral for {item.name}: {item_error}")
+                errors.append({'name': item.name, 'error': str(item_error)})
+        
+        return {
+            "success": True,
+            "created": len(results),
+            "errors": len(errors),
+            "invites": results,
+            "error_details": errors if errors else []
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+@app.get("/api/referral-stats")
+async def referral_stats(customer_id: str):
+    """
+    Get referral statistics for a doctor.
+    Shows how many colleagues were invited and their status.
+    """
+    try:
+        sheets = SheetsClient()
+        
+        # Get doctor name from customer_id
+        doctor = sheets.get_doctor_by_customer_id(customer_id)
+        if not doctor:
+            return {
+                "success": True,
+                "stats": {'total': 0, 'pending': 0, 'clicked': 0, 'trial_started': 0, 'converted': 0, 'invites': []}
+            }
+        
+        stats = sheets.get_referral_stats(doctor['name'])
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+    
     except Exception as e:
         raise HTTPException(
             status_code=500,
