@@ -515,13 +515,14 @@ async def get_doctor(id: str):
             created_at = doctor.get('created_at', '')
             if created_at:
                 try:
-                    # Normalize timezone: +00 -> +00:00, Z -> +00:00
-                    normalized = re.sub(r'([+-]\d{2})$', r'\1:00', created_at.replace('Z', '+00:00'))
-                    created_date = datetime.fromisoformat(normalized)
-                    days_elapsed = (datetime.now(created_date.tzinfo) - created_date).days
+                    # Parse just the date part (first 10 chars: YYYY-MM-DD)
+                    created_at_str = str(created_at)[:10]
+                    created_date = datetime.strptime(created_at_str, '%Y-%m-%d')
+                    days_elapsed = (datetime.utcnow() - created_date).days
                     response["trial_expired"] = days_elapsed >= 7
                     response["trial_days_remaining"] = max(0, 7 - days_elapsed)
-                except:
+                except Exception as e:
+                    print(f"Trial date parse error: {e}, created_at={created_at}")
                     response["trial_expired"] = False
                     response["trial_days_remaining"] = 7
             else:
@@ -570,13 +571,14 @@ async def get_doctor_by_customer(customer_id: str):
             created_at = doctor.get('created_at', '')
             if created_at:
                 try:
-                    # Normalize timezone: +00 -> +00:00, Z -> +00:00
-                    normalized = re.sub(r'([+-]\d{2})$', r'\1:00', created_at.replace('Z', '+00:00'))
-                    created_date = datetime.fromisoformat(normalized)
-                    days_elapsed = (datetime.now(created_date.tzinfo) - created_date).days
+                    # Parse just the date part (first 10 chars: YYYY-MM-DD)
+                    created_at_str = str(created_at)[:10]
+                    created_date = datetime.strptime(created_at_str, '%Y-%m-%d')
+                    days_elapsed = (datetime.utcnow() - created_date).days
                     response["trial_expired"] = days_elapsed >= 7
                     response["trial_days_remaining"] = max(0, 7 - days_elapsed)
-                except:
+                except Exception as e:
+                    print(f"Trial date parse error: {e}, created_at={created_at}")
                     response["trial_expired"] = False
                     response["trial_days_remaining"] = 7
             else:
