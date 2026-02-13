@@ -703,6 +703,48 @@ class SheetsClient:
             print(f"Error checking slug availability: {e}")
             return False
     
+    def upgrade_trial_to_paid(self, old_customer_id, new_customer_id):
+        """
+        Upgrade a trial account to paid by replacing customer_id
+        in both doctors and users tables.
+        
+        Args:
+            old_customer_id (str): The trial_xxx customer ID
+            new_customer_id (str): The cus_xxx customer ID from Stripe
+        
+        Returns:
+            dict: Success status
+        """
+        try:
+            # Update doctors table
+            doc_result = self.supabase.table('doctors').update({
+                'customer_id': new_customer_id,
+                'updated_at': datetime.now().isoformat()
+            }).eq('customer_id', old_customer_id).execute()
+            
+            if not doc_result.data or len(doc_result.data) == 0:
+                return {
+                    'success': False,
+                    'error': f'No doctor found with customer_id {old_customer_id}'
+                }
+            
+            # Update users table
+            self.supabase.table('users').update({
+                'customer_id': new_customer_id
+            }).eq('customer_id', old_customer_id).execute()
+            
+            return {
+                'success': True,
+                'message': f'Upgraded {old_customer_id} to {new_customer_id}'
+            }
+        
+        except Exception as e:
+            print(f"Error upgrading trial: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def get_referral_stats(self, referrer_name):
         """
         Get referral statistics for a doctor by their name.
