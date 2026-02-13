@@ -91,6 +91,7 @@ class Slot(BaseModel):
 class CreateCheckoutRequest(BaseModel):
     success_url: str
     cancel_url: str
+    is_trial: Optional[bool] = False
 
 class SetPasswordRequest(BaseModel):
     customer_id: str
@@ -812,21 +813,30 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     try:
         price_id = os.environ.get('STRIPE_PRICE_ID', 'price_1SpFPDRmTP4UQnz3uiYcFQON')
         
-        checkout_session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
+        # Base checkout parameters
+        checkout_params = {
+            'payment_method_types': ['card'],
+            'line_items': [{
                 'price': price_id,
                 'quantity': 1,
             }],
-            mode='payment',
-            customer_creation='always',
-            payment_intent_data={
+            'mode': 'payment',
+            'customer_creation': 'always',
+            'payment_intent_data': {
                 'setup_future_usage': 'off_session',
             },
-            success_url=request.success_url + '?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url=request.cancel_url,
-            allow_promotion_codes=True,
-        )
+            'success_url': request.success_url + '?session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url': request.cancel_url,
+        }
+        
+        # Trial users get automatic 30% discount
+        # Note: Stripe doesn't allow allow_promotion_codes + discounts together
+        if request.is_trial:
+            checkout_params['discounts'] = [{'promotion_code': 'promo_1T0Ov8DMcPDY3XCzs2doSm4F'}]
+        else:
+            checkout_params['allow_promotion_codes'] = True
+        
+        checkout_session = stripe.checkout.Session.create(**checkout_params)
         
         return {
             "success": True,
