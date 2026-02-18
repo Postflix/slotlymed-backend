@@ -92,6 +92,8 @@ class CreateCheckoutRequest(BaseModel):
     success_url: str
     cancel_url: str
     is_trial: Optional[bool] = False
+    coupon_code: Optional[str] = None   # Ex: "CIOSP2026" — para landings de parceiros
+    test_mode: Optional[bool] = False   # True = usa price de teste (R$1 / price_1Sri6Y...)
 
 class SetPasswordRequest(BaseModel):
     customer_id: str
@@ -808,10 +810,15 @@ def hash_password(password: str) -> str:
 @app.post("/api/create-checkout-session")
 async def create_checkout_session(request: CreateCheckoutRequest):
     """
-    Create a Stripe Checkout session for one-time payment
+    Create a Stripe Checkout session for one-time payment.
+    Supports partner landings via coupon_code and test_mode parameters.
     """
     try:
-        price_id = os.environ.get('STRIPE_PRICE_ID', 'price_1SpFPDRmTP4UQnz3uiYcFQON')
+        # Escolhe o Price ID: test_mode usa preço de teste (R$1), produção usa env var
+        if request.test_mode:
+            price_id = 'price_1Sri6YDMcPDY3XCz7mlaJ0SN'  # Teste BRL R$1,00
+        else:
+            price_id = os.environ.get('STRIPE_PRICE_ID', 'price_1SpFPDRmTP4UQnz3uiYcFQON')
         
         # Base checkout parameters
         checkout_params = {
@@ -829,11 +836,21 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             'cancel_url': request.cancel_url,
         }
         
-        # Trial users get automatic 30% discount
-        # Note: Stripe doesn't allow allow_promotion_codes + discounts together
+        # Determina desconto a aplicar
+        # Prioridade: is_trial > coupon_code > allow_promotion_codes
+        # Nota: Stripe não permite allow_promotion_codes + discounts ao mesmo tempo
         if request.is_trial:
+            # Trial: desconto automático 30% (Referral30)
             checkout_params['discounts'] = [{'promotion_code': 'promo_1T0Ov8DMcPDY3XCzs2doSm4F'}]
+        elif request.coupon_code:
+            # Parceiro: busca o promotion_code pelo código legível (ex: "CIOSP2026")
+            promo_list = stripe.PromotionCode.list(code=request.coupon_code, limit=1, active=True)
+            if not promo_list.data:
+                raise HTTPException(status_code=400, detail=f"Coupon '{request.coupon_code}' not found or inactive")
+            promo_id = promo_list.data[0].id
+            checkout_params['discounts'] = [{'promotion_code': promo_id}]
         else:
+            # Compra normal: usuário pode digitar cupom manualmente
             checkout_params['allow_promotion_codes'] = True
         
         checkout_session = stripe.checkout.Session.create(**checkout_params)
@@ -844,6 +861,8 @@ async def create_checkout_session(request: CreateCheckoutRequest):
             "session_id": checkout_session.id
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
