@@ -816,7 +816,7 @@ async def create_checkout_session(request: CreateCheckoutRequest):
     try:
         # Escolhe o Price ID: test_mode usa preço de teste (R$1), produção usa env var
         if request.test_mode:
-            price_id = 'price_1Sri6YDMcPDY3XCz7mlaJ0SN'  # Teste BRL R$1,00
+            price_id = 'price_1T2DRCDMcPDY3XCzzyVX5NbI'  # Live BRL R$1,00 (para testes)
         else:
             price_id = os.environ.get('STRIPE_PRICE_ID', 'price_1SpFPDRmTP4UQnz3uiYcFQON')
         
